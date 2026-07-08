@@ -1,0 +1,5 @@
+[
+  { "username": "admin", "password": "airnav2026" },
+  { "username": "operator", "password": "panelroom" },
+  { "username": "engineer", "password": "monitoring" }
+]

@@ -1,13 +1,13 @@
 import React, { useState } from 'react';
-import CommissioningWizard from './components/CommissioningWizard';
-import PanelRoomMonitor from './components/PanelRoomMonitor';
+import LoginScreen from './components/LoginScreen';
+import PanelDashboard from './components/PanelDashboard';
 
 export default function App() {
-  const [monitorConfig, setMonitorConfig] = useState(null);
+  const [authenticatedUser, setAuthenticatedUser] = useState(null);
 
-  if (monitorConfig) {
-    return <PanelRoomMonitor rooms={monitorConfig.rooms} thresholds={monitorConfig.thresholds} />;
+  if (authenticatedUser) {
+    return <PanelDashboard username={authenticatedUser} onLogout={() => setAuthenticatedUser(null)} />;
   }
 
-  return <CommissioningWizard onComplete={setMonitorConfig} />;
+  return <LoginScreen onLogin={setAuthenticatedUser} />;
 }
