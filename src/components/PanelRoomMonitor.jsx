@@ -38,6 +38,7 @@ const DEFAULT_PARAM_DEFS = [
   { key: "current", label: "Current", unit: "A", icon: Activity, base: 42, jitter: 4, low: 0, high: 63 },
   { key: "frequency", label: "Frequency", unit: "Hz", icon: Gauge, base: 50, jitter: 0.15, low: 49.5, high: 50.5 },
   { key: "cosphi", label: "Power factor", unit: "", icon: Radio, base: 0.94, jitter: 0.02, low: 0.85, high: 1.0 },
+  { key: "power", label: "Power", unit: "kW", icon: Zap, base: 18.4, jitter: 1.4, low: 0, high: 35 },
   { key: "temp", label: "Temperature", unit: "°C", icon: Thermometer, base: 27, jitter: 1.2, low: 15, high: 35 },
 ];
 

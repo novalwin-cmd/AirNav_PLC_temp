@@ -22,6 +22,7 @@ const initialState = {
     current: { base: 42, low: 0, high: 63 },
     frequency: { base: 50, low: 49.5, high: 50.5 },
     cosphi: { base: 0.94, low: 0.85, high: 1.0 },
+    power: { base: 18.4, low: 0, high: 35 },
     temp: { base: 27, low: 15, high: 35 },
   },
   network: {

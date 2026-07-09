@@ -1,13 +1,37 @@
 import React, { useState } from 'react';
+import { Navigate, Route, Routes, useNavigate } from 'react-router-dom';
 import LoginScreen from './components/LoginScreen';
 import PanelDashboard from './components/PanelDashboard';
 
 export default function App() {
   const [authenticatedUser, setAuthenticatedUser] = useState(null);
+  const navigate = useNavigate();
 
-  if (authenticatedUser) {
-    return <PanelDashboard username={authenticatedUser} onLogout={() => setAuthenticatedUser(null)} />;
+  const handleLogin = (user) => {
+    setAuthenticatedUser(user);
+    navigate('/');
+  };
+
+  const handleLogout = () => {
+    setAuthenticatedUser(null);
+    navigate('/login');
+  };
+
+  if (!authenticatedUser) {
+    return (
+      <Routes>
+        <Route path="/login" element={<LoginScreen onLogin={handleLogin} />} />
+        <Route path="*" element={<Navigate to="/login" replace />} />
+      </Routes>
+    );
   }
 
-  return <LoginScreen onLogin={setAuthenticatedUser} />;
+  return (
+    <Routes>
+      <Route path="/" element={<PanelDashboard username={authenticatedUser} onLogout={handleLogout} />} />
+      <Route path="/panel/:panelId" element={<PanelDashboard username={authenticatedUser} onLogout={handleLogout} />} />
+      <Route path="/thresholds" element={<PanelDashboard username={authenticatedUser} onLogout={handleLogout} />} />
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
+  );
 }

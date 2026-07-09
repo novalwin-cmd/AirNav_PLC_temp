@@ -1,4 +1,4 @@
-const METRIC_KEYS = ['voltage', 'current', 'frequency', 'cosphi', 'temp'];
+const METRIC_KEYS = ['voltage', 'current', 'frequency', 'cosphi', 'power', 'temp'];
 
 function buildHistory(base, jitter, points = 7) {
   const labels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -33,6 +33,7 @@ export function normalizePanels(sourcePanels = []) {
       current: buildMetricEntry(panel.metrics?.current?.value ?? 42, 'A', 2.4),
       frequency: buildMetricEntry(panel.metrics?.frequency?.value ?? 50, 'Hz', 0.12),
       cosphi: buildMetricEntry(panel.metrics?.cosphi?.value ?? 0.94, '', 0.02),
+      power: buildMetricEntry(panel.metrics?.power?.value ?? 18.4, 'kW', 1.4),
       temp: buildMetricEntry(panel.metrics?.temp?.value ?? 27, '°C', 1.1),
     },
   }));
@@ -80,6 +81,12 @@ export function mergeTelemetryData(existingPanels, incomingPanels) {
             history: [...nextPanels[index].metrics.temp.history.slice(-6), { label: 'Now', value: panel.metrics.temp.value }],
             unit: panel.metrics.temp.unit,
           },
+          power: {
+            ...nextPanels[index].metrics.power,
+            value: panel.metrics.power.value,
+            history: [...nextPanels[index].metrics.power.history.slice(-6), { label: 'Now', value: panel.metrics.power.value }],
+            unit: panel.metrics.power.unit,
+          },
         },
       };
     } else {
@@ -102,6 +109,7 @@ export function buildInitialTelemetryFeed() {
         current: { value: 42 },
         frequency: { value: 50 },
         cosphi: { value: 0.94 },
+        power: { value: 18.4 },
         temp: { value: 27 },
       },
     },
@@ -115,6 +123,7 @@ export function buildInitialTelemetryFeed() {
         current: { value: 39 },
         frequency: { value: 49.9 },
         cosphi: { value: 0.93 },
+        power: { value: 17.8 },
         temp: { value: 29 },
       },
     },
@@ -128,6 +137,7 @@ export function buildInitialTelemetryFeed() {
         current: { value: 45 },
         frequency: { value: 50.1 },
         cosphi: { value: 0.95 },
+        power: { value: 19.1 },
         temp: { value: 26 },
       },
     },
@@ -145,6 +155,7 @@ export function applyTelemetryUpdate(previousFeed) {
         current: { value: Number((panel.metrics.current.value + (index === 1 ? 0.3 : -0.2)).toFixed(1)) },
         frequency: { value: Number((panel.metrics.frequency.value + (index === 2 ? 0.02 : -0.01)).toFixed(2)) },
         cosphi: { value: Number((panel.metrics.cosphi.value + (index === 0 ? 0.001 : -0.001)).toFixed(3)) },
+        power: { value: Number((panel.metrics.power.value + (index === 1 ? 0.3 : -0.2)).toFixed(1)) },
         temp: { value: Number((panel.metrics.temp.value + (index === 1 ? 0.4 : -0.2)).toFixed(1)) },
       },
     };
@@ -152,10 +163,29 @@ export function applyTelemetryUpdate(previousFeed) {
 }
 
 export function isMetricAlarm(metricKey, value) {
+  // try to read user-configured thresholds from localStorage
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      const raw = window.localStorage.getItem('airnav_thresholds_v1');
+      const thresholds = raw ? JSON.parse(raw) : null;
+      if (thresholds && thresholds[metricKey]) {
+        const t = thresholds[metricKey];
+        if (typeof t.low === 'number' && typeof t.high === 'number') {
+          return value < t.low || value > t.high;
+        }
+        if (typeof t.high === 'number') return value > t.high;
+        if (typeof t.low === 'number') return value < t.low;
+      }
+    }
+  } catch (e) {
+    // ignore and fall back to defaults below
+  }
+
   if (metricKey === 'voltage') return value < 198 || value > 242;
   if (metricKey === 'current') return value > 63;
   if (metricKey === 'frequency') return value < 49.5 || value > 50.5;
   if (metricKey === 'cosphi') return value < 0.85;
+  if (metricKey === 'power') return value > 35;
   if (metricKey === 'temp') return value > 35;
   return false;
 }

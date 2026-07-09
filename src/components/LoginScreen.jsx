@@ -21,7 +21,7 @@ export default function LoginScreen({ onLogin }) {
   return (
     <div style={styles.page}>
       <div style={styles.card}>
-        <p style={styles.eyebrow}>AirNav panel room monitoring</p>
+        <p style={styles.eyebrow}>AirNav Monitoring and Control</p>
         <h1 style={styles.title}>Secure access</h1>
         <p style={styles.subtitle}>Sign in with one of the configured local accounts to open the dashboard.</p>
 

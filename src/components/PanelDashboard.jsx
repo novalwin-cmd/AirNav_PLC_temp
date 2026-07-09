@@ -9,14 +9,21 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { applyTelemetryUpdate, buildInitialTelemetryFeed, isMetricAlarm, mergeTelemetryData, normalizePanels } from '../services/panelTelemetry';
+import LogTerminal from './LogTerminal';
+import PanelLogPage from './PanelLogPage';
+import ThresholdEditor from './ThresholdEditor';
+import ControlsPanel from './ControlsPanel';
+import PanelPage from './PanelPage';
 
 const METRIC_DEFS = [
   { key: 'voltage', label: 'Voltage', unit: 'V', icon: Zap, accent: '#2DD4BF' },
   { key: 'current', label: 'Current', unit: 'A', icon: Activity, accent: '#38BDF8' },
   { key: 'frequency', label: 'Frequency', unit: 'Hz', icon: Gauge, accent: '#F59E0B' },
   { key: 'cosphi', label: 'Power factor', unit: '', icon: Radio, accent: '#A78BFA' },
-  { key: 'temp', label: 'Temperature', unit: '°C', icon: Thermometer, accent: '#F472B6' },
+  { key: 'power', label: 'Power', unit: 'kW', icon: Zap, accent: '#F472B6' },
+  { key: 'temp', label: 'Temperature', unit: '°C', icon: Thermometer, accent: '#34D399' },
 ];
 
 const INITIAL_PANELS = normalizePanels(buildInitialTelemetryFeed());
@@ -46,8 +53,15 @@ export default function PanelDashboard({ username, onLogout, telemetryFeed = nul
     current: '42',
     frequency: '50',
     cosphi: '0.95',
+    power: '18.4',
     temp: '27',
   });
+  const [selectedPanelForLogs, setSelectedPanelForLogs] = useState(null);
+  const navigate = useNavigate();
+  const location = useLocation();
+  const { panelId } = useParams();
+  const selectedPanelPage = panelId || null;
+  const isThresholdRoute = location.pathname === '/thresholds';
 
   useEffect(() => {
     if (telemetryFeed) {
@@ -71,6 +85,53 @@ export default function PanelDashboard({ username, onLogout, telemetryFeed = nul
     };
   }, [panels]);
 
+  // render the threshold editor page separately when the route matches
+  if (isThresholdRoute) {
+    return (
+      <div style={styles.page}>
+        <div style={styles.shell}>
+          <div style={styles.header}>
+            <div>
+              <p style={styles.eyebrow}>AirNav control room</p>
+              <h1 style={styles.title}>Thresholds</h1>
+              <p style={styles.subtitle}>Edit alarm thresholds for metrics. Changes are stored locally.</p>
+            </div>
+            <div style={styles.headerActions}>
+              <button type="button" onClick={() => navigate('/')} style={styles.secondaryButton}>Back</button>
+            </div>
+          </div>
+          <ThresholdEditor />
+        </div>
+      </div>
+    );
+  }
+
+  if (selectedPanelPage) {
+    const panel = panels.find((p) => p.id === selectedPanelPage);
+    if (!panel) {
+      return (
+        <div style={styles.page}>
+          <div style={styles.shell}>
+            <div style={{ background: 'var(--bg)', border: '1px solid var(--surface-border)', borderRadius: 20, padding: 28 }}>
+              <div style={{ marginBottom: 18 }}>
+                <h1 style={{ margin: 0 }}>Panel not found</h1>
+                <p style={{ color: 'var(--muted)' }}>The selected panel could not be loaded. Try returning to the overview.</p>
+              </div>
+              <button type="button" onClick={() => navigate('/')} style={styles.primaryButton}>Back to dashboard</button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+    return (
+      <div style={styles.page}>
+        <div style={styles.shell}>
+          <PanelPage panel={panel} mode={mode} onBack={() => navigate('/')} />
+        </div>
+      </div>
+    );
+  }
+
   const handleAddPanel = (event) => {
     event.preventDefault();
     if (!draft.name.trim() || !draft.zone.trim()) {
@@ -87,6 +148,7 @@ export default function PanelDashboard({ username, onLogout, telemetryFeed = nul
         current: { value: Number(draft.current) },
         frequency: { value: Number(draft.frequency) },
         cosphi: { value: Number(draft.cosphi) },
+        power: { value: Number(draft.power) },
         temp: { value: Number(draft.temp) },
       },
     };
@@ -99,6 +161,7 @@ export default function PanelDashboard({ username, onLogout, telemetryFeed = nul
       current: '42',
       frequency: '50',
       cosphi: '0.95',
+      power: '18.4',
       temp: '27',
     });
     setComposerOpen(false);
@@ -109,8 +172,8 @@ export default function PanelDashboard({ username, onLogout, telemetryFeed = nul
       <div style={styles.shell}>
         <header style={styles.header}>
           <div>
-            <p style={styles.eyebrow}>AirNav control room</p>
-            <h1 style={styles.title}>Panel room operations dashboard</h1>
+            <p style={styles.eyebrow}>AirNav</p>
+            <h1 style={styles.title}>AirNav Monitoring and Control</h1>
             <p style={styles.subtitle}>
               Monitoring and control modes share the same live panel overview, and each panel can open a weekly trend view.
             </p>
@@ -139,10 +202,15 @@ export default function PanelDashboard({ username, onLogout, telemetryFeed = nul
               </button>
             ))}
           </div>
-          <button type="button" onClick={() => setComposerOpen(true)} style={styles.primaryButton}>
-            <Plus size={16} /> Add panel
-          </button>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button type="button" onClick={() => navigate('/thresholds')} style={styles.secondaryButton}>Thresholds</button>
+            <button type="button" onClick={() => setComposerOpen(true)} style={styles.primaryButton}>
+              <Plus size={16} /> Add panel
+            </button>
+          </div>
         </div>
+
+        
 
         <div style={styles.summaryRow}>
           <div style={styles.summaryCard}>
@@ -224,6 +292,16 @@ export default function PanelDashboard({ username, onLogout, telemetryFeed = nul
                 />
               </label>
               <label style={styles.field}>
+                <span style={styles.fieldLabel}>Power (kW)</span>
+                <input
+                  type="number"
+                  value={draft.power}
+                  step="0.1"
+                  onChange={(event) => setDraft((current) => ({ ...current, power: event.target.value }))}
+                  style={styles.input}
+                />
+              </label>
+              <label style={styles.field}>
                 <span style={styles.fieldLabel}>Temperature (°C)</span>
                 <input
                   type="number"
@@ -247,7 +325,13 @@ export default function PanelDashboard({ username, onLogout, telemetryFeed = nul
                   <h2 style={styles.panelTitle}>{panel.name}</h2>
                   <p style={styles.panelZone}>{panel.zone}</p>
                 </div>
-                <span style={styles.statusTag}>{mode === 'control' ? 'Control ready' : 'Monitoring live'}</span>
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
+                    <span style={styles.statusTag}>{mode === 'control' ? 'Control ready' : 'Monitoring live'}</span>
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <button type="button" onClick={() => setSelectedPanelForLogs(panel.id)} style={styles.secondaryButton}>Logs</button>
+                      <button type="button" onClick={() => navigate(`/panel/${panel.id}`)} style={styles.primaryButton}>Open</button>
+                    </div>
+                  </div>
               </div>
 
               <div style={styles.metricGrid}>
@@ -291,6 +375,24 @@ export default function PanelDashboard({ username, onLogout, telemetryFeed = nul
             </article>
           ))}
         </div>
+
+        {/* Logs shown after the panels */}
+        <div style={{ marginTop: 18 }}>
+          <LogTerminal panels={panels} />
+        </div>
+
+        {selectedPanelForLogs && (() => {
+          const panel = panels.find((p) => p.id === selectedPanelForLogs);
+          if (!panel) return null;
+          return (
+            <div style={styles.modalOverlay}>
+              <div style={{ ...styles.modalCard, width: 'min(100%, 980px)', padding: 0 }}>
+                <PanelLogPage panelId={selectedPanelForLogs} panel={panel} onBack={() => setSelectedPanelForLogs(null)} />
+              </div>
+            </div>
+          );
+        })()}
+
       </div>
 
       {selectedMetric && (
@@ -371,17 +473,17 @@ const styles = {
     flexWrap: 'wrap',
   },
   userBadge: {
-    background: '#10161F',
-    border: '1px solid #212B3B',
+    background: 'var(--bg-strong)',
+    border: '1px solid var(--surface-border)',
     borderRadius: 999,
-    padding: '8px 12px',
-    color: '#E7ECF3',
+    padding: '10px 14px',
+    color: 'var(--text)',
   },
   secondaryButton: {
-    border: '1px solid #212B3B',
-    background: 'transparent',
-    color: '#E7ECF3',
-    padding: '8px 12px',
+    border: '1px solid var(--surface-border)',
+    background: 'var(--bg)',
+    color: 'var(--text)',
+    padding: '10px 14px',
     borderRadius: 999,
     cursor: 'pointer',
   },
@@ -395,16 +497,16 @@ const styles = {
   modeSwitcher: {
     display: 'flex',
     gap: 8,
-    background: '#10161F',
-    padding: 6,
+    background: 'var(--bg-strong)',
+    padding: 8,
     borderRadius: 999,
-    border: '1px solid #212B3B',
+    border: '1px solid var(--surface-border)',
   },
   modeButton: {
     border: 0,
     background: 'transparent',
-    color: '#8C97A8',
-    padding: '8px 14px',
+    color: 'var(--muted)',
+    padding: '10px 16px',
     borderRadius: 999,
     cursor: 'pointer',
     textTransform: 'capitalize',
@@ -432,32 +534,32 @@ const styles = {
     gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
   },
   summaryCard: {
-    background: '#10161F',
-    border: '1px solid #212B3B',
-    borderRadius: 16,
-    padding: 16,
+    background: 'var(--bg-strong)',
+    border: '1px solid var(--surface-border)',
+    borderRadius: 20,
+    padding: 20,
     display: 'flex',
     flexDirection: 'column',
-    gap: 6,
+    gap: 8,
   },
   summaryLabel: {
-    color: '#8C97A8',
+    color: 'var(--muted)',
     fontSize: 12,
     textTransform: 'uppercase',
     letterSpacing: '0.2em',
   },
   summaryValue: {
     fontSize: 24,
-    color: '#E7ECF3',
+    color: 'var(--text)',
   },
   composerCard: {
-    background: '#10161F',
-    border: '1px solid #212B3B',
-    borderRadius: 16,
-    padding: 16,
+    background: 'var(--bg)',
+    border: '1px solid var(--surface-border)',
+    borderRadius: 20,
+    padding: 20,
     display: 'flex',
     flexDirection: 'column',
-    gap: 14,
+    gap: 18,
   },
   composerHeader: {
     display: 'flex',
@@ -512,49 +614,53 @@ const styles = {
     gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
   },
   panelCard: {
-    background: '#10161F',
-    border: '1px solid #212B3B',
-    borderRadius: 18,
-    padding: 16,
+    background: 'var(--bg)',
+    border: '1px solid var(--surface-border)',
+    borderRadius: 24,
+    padding: 20,
     display: 'flex',
     flexDirection: 'column',
-    gap: 14,
+    gap: 18,
   },
   panelHeader: {
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
-    gap: 10,
+    gap: 12,
   },
   panelTitle: {
     margin: 0,
     fontSize: 18,
     color: '#E7ECF3',
+    overflowWrap: 'break-word',
+    wordBreak: 'break-word',
   },
   panelZone: {
     margin: '4px 0 0',
     color: '#8C97A8',
     fontSize: 13,
+    overflowWrap: 'break-word',
+    wordBreak: 'break-word',
   },
   statusTag: {
     fontSize: 12,
-    padding: '6px 10px',
+    padding: '8px 12px',
     borderRadius: 999,
-    background: '#1f2937',
-    color: '#2DD4BF',
+    background: 'var(--bg-strong)',
+    color: 'var(--brand)',
     whiteSpace: 'nowrap',
   },
   metricGrid: {
     display: 'grid',
-    gap: 10,
+    gap: 12,
     gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
   },
   metricCard: {
-    border: '1px solid #212B3B',
-    background: '#0A0E14',
-    color: '#E7ECF3',
-    padding: 12,
-    borderRadius: 14,
+    border: '1px solid var(--surface-border)',
+    background: 'var(--bg)',
+    color: 'var(--text)',
+    padding: 16,
+    borderRadius: 20,
     cursor: 'pointer',
     textAlign: 'left',
   },
