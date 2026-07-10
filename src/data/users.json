@@ -1,5 +1,4 @@
 [
-  { "username": "admin", "password": "airnav2026" },
-  { "username": "operator", "password": "panelroom" },
-  { "username": "engineer", "password": "monitoring" }
+  { "username": "admin", "password": "airnav2026", "role": "admin" },
+  { "username": "engineer", "password": "monitoring", "role": "engineer" }
 ]

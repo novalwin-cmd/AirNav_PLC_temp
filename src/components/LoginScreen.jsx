@@ -8,10 +8,11 @@ export default function LoginScreen({ onLogin }) {
 
   const handleSubmit = (event) => {
     event.preventDefault();
-    const match = users.find((entry) => entry.username === username.trim() && entry.password === password);
+    const normalizedUsername = username.trim().toLowerCase();
+    const match = users.find((entry) => entry.username.toLowerCase() === normalizedUsername && entry.password === password);
 
     if (match) {
-      onLogin(match.username);
+      onLogin(match);
       return;
     }
 
@@ -23,12 +24,12 @@ export default function LoginScreen({ onLogin }) {
       <div style={styles.card}>
         <p style={styles.eyebrow}>AirNav Monitoring and Control</p>
         <h1 style={styles.title}>Secure access</h1>
-        <p style={styles.subtitle}>Sign in with one of the configured local accounts to open the dashboard.</p>
+        <p style={styles.subtitle}>Sign in with one of the configured local accounts. Admin can use monitoring and control, while Engineer is monitoring-only.</p>
 
         <form onSubmit={handleSubmit} style={styles.form}>
           <label style={styles.field}>
             <span style={styles.label}>Username</span>
-            <input value={username} onChange={(event) => setUsername(event.target.value)} style={styles.input} placeholder="admin" />
+            <input value={username} onChange={(event) => setUsername(event.target.value)} style={styles.input} placeholder="admin or engineer" />
           </label>
 
           <label style={styles.field}>
@@ -46,7 +47,7 @@ export default function LoginScreen({ onLogin }) {
           <ul style={styles.helpList}>
             {users.map((entry) => (
               <li key={entry.username}>
-                <strong>{entry.username}</strong> / {entry.password}
+                <strong>{entry.username}</strong> / {entry.password} {entry.role === 'admin' ? '(control + monitoring)' : '(monitoring only)'}
               </li>
             ))}
           </ul>

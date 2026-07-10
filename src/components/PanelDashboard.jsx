@@ -41,7 +41,8 @@ function formatMetricValue(def, value) {
   return value.toFixed(1);
 }
 
-export default function PanelDashboard({ username, onLogout, telemetryFeed = null }) {
+export default function PanelDashboard({ username, userRole = 'engineer', onLogout, telemetryFeed = null }) {
+  const canControl = userRole === 'admin';
   const [mode, setMode] = useState('monitoring');
   const [panels, setPanels] = useState(INITIAL_PANELS);
   const [isComposerOpen, setComposerOpen] = useState(false);
@@ -62,6 +63,12 @@ export default function PanelDashboard({ username, onLogout, telemetryFeed = nul
   const { panelId } = useParams();
   const selectedPanelPage = panelId || null;
   const isThresholdRoute = location.pathname === '/thresholds';
+
+  useEffect(() => {
+    if (!canControl) {
+      setMode('monitoring');
+    }
+  }, [canControl]);
 
   useEffect(() => {
     if (telemetryFeed) {
@@ -126,7 +133,7 @@ export default function PanelDashboard({ username, onLogout, telemetryFeed = nul
     return (
       <div style={styles.page}>
         <div style={styles.shell}>
-          <PanelPage panel={panel} mode={mode} onBack={() => navigate('/')} />
+          <PanelPage panel={panel} mode={canControl ? mode : 'monitoring'} onBack={() => navigate('/')} />
         </div>
       </div>
     );
@@ -188,7 +195,7 @@ export default function PanelDashboard({ username, onLogout, telemetryFeed = nul
 
         <div style={styles.toolbar}>
           <div style={styles.modeSwitcher}>
-            {['monitoring', 'control'].map((item) => (
+            {canControl ? ['monitoring', 'control'].map((item) => (
               <button
                 key={item}
                 type="button"
@@ -200,13 +207,25 @@ export default function PanelDashboard({ username, onLogout, telemetryFeed = nul
               >
                 {item === 'monitoring' ? 'Monitoring mode' : 'Control mode'}
               </button>
-            ))}
+            )) : (
+              <div style={{ ...styles.modeButton, ...styles.modeButtonActive, cursor: 'default' }}>
+                Monitoring mode
+              </div>
+            )}
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
-            <button type="button" onClick={() => navigate('/thresholds')} style={styles.secondaryButton}>Thresholds</button>
-            <button type="button" onClick={() => setComposerOpen(true)} style={styles.primaryButton}>
-              <Plus size={16} /> Add panel
-            </button>
+            {canControl ? (
+              <>
+                <button type="button" onClick={() => navigate('/thresholds')} style={styles.secondaryButton}>Thresholds</button>
+                <button type="button" onClick={() => setComposerOpen(true)} style={styles.primaryButton}>
+                  <Plus size={16} /> Add panel
+                </button>
+              </>
+            ) : (
+              <div style={{ background: 'rgba(245, 184, 76, 0.12)', border: '1px solid #F5B84C', borderRadius: 999, padding: '10px 14px', color: '#F5B84C', fontSize: 13 }}>
+                Monitoring-only access
+              </div>
+            )}
           </div>
         </div>
 

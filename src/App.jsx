@@ -28,9 +28,9 @@ export default function App() {
 
   return (
     <Routes>
-      <Route path="/" element={<PanelDashboard username={authenticatedUser} onLogout={handleLogout} />} />
-      <Route path="/panel/:panelId" element={<PanelDashboard username={authenticatedUser} onLogout={handleLogout} />} />
-      <Route path="/thresholds" element={<PanelDashboard username={authenticatedUser} onLogout={handleLogout} />} />
+      <Route path="/" element={<PanelDashboard username={authenticatedUser?.username} userRole={authenticatedUser?.role} onLogout={handleLogout} />} />
+      <Route path="/panel/:panelId" element={<PanelDashboard username={authenticatedUser?.username} userRole={authenticatedUser?.role} onLogout={handleLogout} />} />
+      <Route path="/thresholds" element={<PanelDashboard username={authenticatedUser?.username} userRole={authenticatedUser?.role} onLogout={handleLogout} />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
