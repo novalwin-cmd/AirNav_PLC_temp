@@ -19,6 +19,9 @@ import {
   Clock,
   Cable,
 } from "lucide-react";
+import { recordAlarm, getAlarmsByPanel } from "../services/alarmLogger";
+import { triggerAlarmNotification } from "../services/audioNotification";
+import AlarmViewer from "./AlarmViewer";
 
 const COLORS = {
   bg: "#0A0E14",
@@ -135,10 +138,17 @@ function useLiveRooms(rooms, thresholds) {
   return roomData;
 }
 
-function ParamCard({ def, data }) {
+function ParamCard({ def, data, roomName }) {
   const s = statusOf(data.value, def.low, def.high);
   const color = statusColor(s);
   const Icon = def.icon;
+  
+  // Check if current value is an alarm point (out of threshold)
+  const alarmPoints = data.history.filter((d) => {
+    const stat = statusOf(d.v, def.low, def.high);
+    return stat !== "ok";
+  });
+
   return (
     <div
       style={{
@@ -188,7 +198,7 @@ function ParamCard({ def, data }) {
         </span>
       </div>
 
-      <div style={{ height: 34, margin: "0 -4px" }}>
+      <div style={{ height: 34, margin: "0 -4px", position: "relative" }}>
         <ResponsiveContainer width="100%" height="100%">
           <AreaChart data={data.history} margin={{ top: 2, right: 4, left: 4, bottom: 0 }}>
             <defs>
@@ -198,6 +208,29 @@ function ParamCard({ def, data }) {
               </linearGradient>
             </defs>
             <YAxis hide domain={["dataMin - 1", "dataMax + 1"]} />
+            <Tooltip 
+              content={({ active, payload }) => {
+                if (active && payload && payload.length) {
+                  const val = payload[0].value;
+                  const stat = statusOf(val, def.low, def.high);
+                  if (stat !== "ok") {
+                    return (
+                      <div style={{
+                        background: COLORS.surface2,
+                        border: `1px solid ${statusColor(stat)}`,
+                        borderRadius: 6,
+                        padding: "6px 8px",
+                        fontSize: 10,
+                        color: statusColor(stat),
+                      }}>
+                        ⚠ {val.toFixed(1)} {def.unit}
+                      </div>
+                    );
+                  }
+                }
+                return null;
+              }}
+            />
             <Area
               type="monotone"
               dataKey="v"
@@ -209,6 +242,34 @@ function ParamCard({ def, data }) {
             />
           </AreaChart>
         </ResponsiveContainer>
+        {/* Red dot indicators for alarm history */}
+        <svg 
+          style={{
+            position: "absolute",
+            top: 0,
+            left: 0,
+            width: "100%",
+            height: "100%",
+            pointerEvents: "none",
+          }}
+        >
+          {alarmPoints.map((point, idx) => {
+            const xPercent = (point.i / (data.history.length - 1 || 1)) * 100;
+            const vMin = Math.min(...data.history.map(h => h.v));
+            const vMax = Math.max(...data.history.map(h => h.v));
+            const yPercent = ((vMax - point.v) / (vMax - vMin || 1)) * 100;
+            return (
+              <circle
+                key={idx}
+                cx={`${xPercent}%`}
+                cy={`${yPercent}%`}
+                r="2"
+                fill={COLORS.crit}
+                opacity="0.8"
+              />
+            );
+          })}
+        </svg>
       </div>
 
       <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, color: COLORS.textLow }}>
@@ -393,6 +454,8 @@ export default function PanelRoomMonitor({ rooms = [], thresholds = {} }) {
   const selected = roomsData.find((r) => r.id === selectedId) || roomsData[0];
   const clockRef = useRef(null);
   const [now, setNow] = useState(new Date());
+  const [showAlarmViewer, setShowAlarmViewer] = useState(false);
+  const previousAlarmsRef = useRef({});
 
   useEffect(() => {
     if (roomsData.length && !roomsData.some((r) => r.id === selectedId)) {
@@ -404,6 +467,145 @@ export default function PanelRoomMonitor({ rooms = [], thresholds = {} }) {
     clockRef.current = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(clockRef.current);
   }, []);
+
+  // Detect and record new alarms for all rooms, not only the selected one
+  useEffect(() => {
+    if (!roomsData.length) return;
+
+    roomsData.forEach((room) => {
+      DEFAULT_PARAM_DEFS.forEach((p) => {
+        const val = room.params[p.key].value;
+        const low = thresholds[p.key]?.low ?? p.low;
+        const high = thresholds[p.key]?.high ?? p.high;
+        const s = statusOf(val, low, high);
+
+        const alarmKey = `${room.id}-${p.key}`;
+        const wasAlarming = previousAlarmsRef.current[alarmKey];
+        const isAlarming = s !== "ok";
+
+        if (isAlarming) {
+          let detail = '';
+          if (val > high) {
+            detail = `${p.label} above high (${val}${p.unit} > ${high}${p.unit})`;
+          } else if (val < low) {
+            detail = `${p.label} below low (${val}${p.unit} < ${low}${p.unit})`;
+          }
+
+          recordAlarm(
+            room.id,
+            room.name,
+            p.label,
+            val,
+            p.unit,
+            low,
+            high,
+            s,
+            detail
+          );
+          triggerAlarmNotification(s);
+
+          try {
+            const key = 'airnav_panel_logs_v1';
+            const raw = window.localStorage.getItem(key) || '[]';
+            const existing = JSON.parse(raw);
+            const metricsSnapshot = Object.fromEntries(DEFAULT_PARAM_DEFS.map((m) => [m.key, { value: room.params[m.key].value }]));
+            const logEntry = {
+              panelId: room.id,
+              timestamp: new Date().toISOString(),
+              metrics: metricsSnapshot,
+              isAlarm: true,
+              alarmInfo: { param: p.label, value: val, unit: p.unit, low, high, level: s, detail },
+            };
+            existing.push(logEntry);
+            if (existing.length > 5000) existing.splice(0, existing.length - 5000);
+            window.localStorage.setItem(key, JSON.stringify(existing));
+          } catch (e) {
+            // ignore storage errors
+          }
+        }
+
+        previousAlarmsRef.current[alarmKey] = isAlarming;
+      });
+
+      const commKey = `${room.id}-comms`;
+      const wasCommAlarming = previousAlarmsRef.current[commKey];
+      const isCommAlarming = !room.online;
+
+      if (isCommAlarming && !wasCommAlarming) {
+        recordAlarm(
+          room.id,
+          room.name,
+          "Node comms",
+          0,
+          "",
+          0,
+          1,
+          "crit"
+        );
+        triggerAlarmNotification("crit");
+        try {
+          const key = 'airnav_panel_logs_v1';
+          const raw = window.localStorage.getItem(key) || '[]';
+          const existing = JSON.parse(raw);
+          const metricsSnapshot = Object.fromEntries(DEFAULT_PARAM_DEFS.map((m) => [m.key, { value: room.params[m.key].value }]));
+          const logEntry = {
+            panelId: room.id,
+            timestamp: new Date().toISOString(),
+            metrics: metricsSnapshot,
+            isAlarm: true,
+            alarmInfo: { param: 'Node comms', value: null, unit: '', low: 0, high: 1, level: 'crit' },
+          };
+          existing.push(logEntry);
+          if (existing.length > 5000) existing.splice(0, existing.length - 5000);
+          window.localStorage.setItem(key, JSON.stringify(existing));
+        } catch (e) {
+          // ignore
+        }
+      }
+
+      previousAlarmsRef.current[commKey] = isCommAlarming;
+    });
+  }, [roomsData, thresholds]);
+
+  // Dev helper: expose a forceAlarm function for testing in the browser console
+  useEffect(() => {
+    try {
+      window.forceAlarm = (panelId, key, value) => {
+        const room = roomsData.find((r) => r.id === panelId);
+        if (!room) return;
+        const def = DEFAULT_PARAM_DEFS.find((d) => d.key === key);
+        if (!def) return;
+        const low = thresholds[key]?.low ?? def.low;
+        const high = thresholds[key]?.high ?? def.high;
+        const s = statusOf(value, low, high);
+        let detail = '';
+        if (value > high) detail = `${def.label} above high (${value}${def.unit} > ${high}${def.unit})`;
+        else if (value < low) detail = `${def.label} below low (${value}${def.unit} < ${low}${def.unit})`;
+
+        recordAlarm(panelId, room.name, def.label, value, def.unit, low, high, s, detail);
+        triggerAlarmNotification(s);
+        try {
+          const keyStorage = 'airnav_panel_logs_v1';
+          const raw = window.localStorage.getItem(keyStorage) || '[]';
+          const existing = JSON.parse(raw);
+          const metricsSnapshot = Object.fromEntries(DEFAULT_PARAM_DEFS.map((m) => [m.key, { value: room.params[m.key].value }]));
+          const logEntry = {
+            panelId: panelId,
+            timestamp: new Date().toISOString(),
+            metrics: metricsSnapshot,
+            isAlarm: true,
+            alarmInfo: { param: def.label, value, unit: def.unit, low, high, level: s, detail },
+          };
+          existing.push(logEntry);
+          if (existing.length > 5000) existing.splice(0, existing.length - 5000);
+          window.localStorage.setItem(keyStorage, JSON.stringify(existing));
+        } catch (e) {}
+      };
+    } catch (e) {}
+    return () => {
+      try { delete window.forceAlarm; } catch (e) {}
+    };
+  }, [roomsData, thresholds]);
 
   const alarms = useMemo(() => {
     const list = [];
@@ -577,7 +779,7 @@ export default function PanelRoomMonitor({ rooms = [], thresholds = {} }) {
             }}
           >
             {DEFAULT_PARAM_DEFS.map((def) => (
-              <ParamCard key={def.key} def={{ ...def, low: thresholds[def.key]?.low ?? def.low, high: thresholds[def.key]?.high ?? def.high }} data={selected.params[def.key]} />
+              <ParamCard key={def.key} def={{ ...def, low: thresholds[def.key]?.low ?? def.low, high: thresholds[def.key]?.high ?? def.high }} data={selected.params[def.key]} roomName={selected?.name} />
             ))}
           </div>
 
@@ -586,8 +788,37 @@ export default function PanelRoomMonitor({ rooms = [], thresholds = {} }) {
 
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <AlarmLog alarms={alarms} />
+          <button
+            onClick={() => setShowAlarmViewer(true)}
+            style={{
+              width: "100%",
+              padding: "12px 16px",
+              background: COLORS.accent,
+              color: COLORS.bg,
+              border: "none",
+              borderRadius: 10,
+              cursor: "pointer",
+              fontWeight: 600,
+              fontSize: 12,
+              letterSpacing: 0.3,
+              transition: "opacity 0.2s ease",
+            }}
+            onMouseEnter={(e) => (e.target.style.opacity = "0.9")}
+            onMouseLeave={(e) => (e.target.style.opacity = "1")}
+          >
+            VIEW FULL LOG
+          </button>
         </div>
       </div>
+
+      {/* Alarm Viewer Modal */}
+      {showAlarmViewer && selected && (
+        <AlarmViewer
+          panelId={selected.id}
+          panelName={selected.name}
+          onClose={() => setShowAlarmViewer(false)}
+        />
+      )}
     </div>
   );
 }

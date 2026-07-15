@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Activity, Gauge, Plus, Radio, Thermometer, X, Zap } from 'lucide-react';
 import {
   CartesianGrid,
@@ -11,6 +11,8 @@ import {
 } from 'recharts';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { applyTelemetryUpdate, buildInitialTelemetryFeed, isMetricAlarm, mergeTelemetryData, normalizePanels } from '../services/panelTelemetry';
+import { enableAudio, triggerAlarmNotification } from '../services/audioNotification';
+import { recordAlarm } from '../services/alarmLogger';
 import LogTerminal from './LogTerminal';
 import PanelLogPage from './PanelLogPage';
 import ThresholdEditor from './ThresholdEditor';
@@ -27,6 +29,47 @@ const METRIC_DEFS = [
 ];
 
 const INITIAL_PANELS = normalizePanels(buildInitialTelemetryFeed());
+
+const DEFAULT_THRESHOLDS = {
+  voltage: { low: 198, high: 242 },
+  current: { low: 0, high: 63 },
+  frequency: { low: 49.5, high: 50.5 },
+  cosphi: { low: 0.85, high: 1.0 },
+  power: { low: 0, high: 35 },
+  temp: { low: 15, high: 35 },
+};
+
+function loadConfiguredThresholds() {
+  try {
+    const raw = window.localStorage.getItem('airnav_thresholds_v1');
+    const configured = raw ? JSON.parse(raw) : {};
+    return { ...DEFAULT_THRESHOLDS, ...configured };
+  } catch (e) {
+    return DEFAULT_THRESHOLDS;
+  }
+}
+
+function buildAlarmInfo(value, key, unit, thresholds) {
+  const threshold = thresholds[key] || DEFAULT_THRESHOLDS[key] || { low: 0, high: Infinity };
+  if (typeof value !== 'number' || Number.isNaN(value)) {
+    return { isAlarm: false, level: 'ok', message: null };
+  }
+  if (value > threshold.high) {
+    return {
+      isAlarm: true,
+      level: 'crit',
+      message: `Over ${key} (${value}${unit} > ${threshold.high}${unit})`,
+    };
+  }
+  if (value < threshold.low) {
+    return {
+      isAlarm: true,
+      level: 'crit',
+      message: `Under ${key} (${value}${unit} < ${threshold.low}${unit})`,
+    };
+  }
+  return { isAlarm: false, level: 'ok', message: null };
+}
 
 function formatMetricValue(def, value) {
   if (def.key === 'cosphi') {
@@ -46,6 +89,7 @@ export default function PanelDashboard({ username, userRole = 'engineer', onLogo
   const [mode, setMode] = useState('monitoring');
   const [panels, setPanels] = useState(INITIAL_PANELS);
   const [isComposerOpen, setComposerOpen] = useState(false);
+  const [audioEnabled, setAudioEnabled] = useState(false);
   const [selectedMetric, setSelectedMetric] = useState(null);
   const [draft, setDraft] = useState({
     name: '',
@@ -58,6 +102,8 @@ export default function PanelDashboard({ username, userRole = 'engineer', onLogo
     temp: '27',
   });
   const [selectedPanelForLogs, setSelectedPanelForLogs] = useState(null);
+  const [configuredThresholds] = useState(() => loadConfiguredThresholds());
+  const previousAlarmState = useRef({});
   const navigate = useNavigate();
   const location = useLocation();
   const { panelId } = useParams();
@@ -69,6 +115,30 @@ export default function PanelDashboard({ username, userRole = 'engineer', onLogo
       setMode('monitoring');
     }
   }, [canControl]);
+
+  // Restore custom alarm from localStorage if present
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem('airnav_custom_alarm_b64');
+      if (stored) {
+        const matches = stored.match(/^data:(.*);base64,(.*)$/);
+        if (matches) {
+          const mime = matches[1] || 'audio/mpeg';
+          const b64 = matches[2];
+          const byteChars = atob(b64);
+          const byteNumbers = new Array(byteChars.length);
+          for (let i = 0; i < byteChars.length; i += 1) {
+            byteNumbers[i] = byteChars.charCodeAt(i);
+          }
+          const byteArray = new Uint8Array(byteNumbers);
+          const blob = new Blob([byteArray], { type: mime });
+          const url = URL.createObjectURL(blob);
+          setExternalAlarmUrl(url);
+          setAudioFileName('custom');
+        }
+      }
+    } catch (e) {}
+  }, []);
 
   useEffect(() => {
     if (telemetryFeed) {
@@ -83,14 +153,79 @@ export default function PanelDashboard({ username, userRole = 'engineer', onLogo
     return () => window.clearInterval(timer);
   }, [telemetryFeed]);
 
+  useEffect(() => {
+    const currentThresholds = (() => {
+      try {
+        const raw = window.localStorage.getItem('airnav_thresholds_v1');
+        const configured = raw ? JSON.parse(raw) : {};
+        return { ...DEFAULT_THRESHOLDS, ...configured };
+      } catch (e) {
+        return DEFAULT_THRESHOLDS;
+      }
+    })();
+
+    panels.forEach((panel) => {
+      METRIC_DEFS.forEach((metric) => {
+        const value = panel.metrics[metric.key]?.value;
+        const low = currentThresholds[metric.key]?.low ?? DEFAULT_THRESHOLDS[metric.key].low;
+        const high = currentThresholds[metric.key]?.high ?? DEFAULT_THRESHOLDS[metric.key].high;
+        const key = `${panel.id}-${metric.key}`;
+        const wasAlarm = previousAlarmState.current[key];
+        const isAlarm = value < low || value > high;
+
+        if (isAlarm) {
+          const detail = value > high
+            ? `${metric.label} above high (${value}${metric.unit} > ${high}${metric.unit})`
+            : `${metric.label} below low (${value}${metric.unit} < ${low}${metric.unit})`;
+          const level = 'crit';
+
+          recordAlarm(panel.id, panel.name, metric.label, value, metric.unit, low, high, level, detail);
+          triggerAlarmNotification(level);
+
+          try {
+            const keyStorage = 'airnav_panel_logs_v1';
+            const raw = window.localStorage.getItem(keyStorage) || '[]';
+            const existing = JSON.parse(raw);
+            const logEntry = {
+              panelId: panel.id,
+              timestamp: new Date().toISOString(),
+              metrics: Object.fromEntries(METRIC_DEFS.map((m) => [m.key, { value: panel.metrics[m.key]?.value ?? null }])),
+              isAlarm: true,
+              alarmInfo: { param: metric.label, value, unit: metric.unit, low, high, level, detail },
+            };
+            existing.push(logEntry);
+            if (existing.length > 5000) existing.splice(0, existing.length - 5000);
+            window.localStorage.setItem(keyStorage, JSON.stringify(existing));
+          } catch (e) {
+            // ignore storage errors
+          }
+        }
+
+        previousAlarmState.current[key] = isAlarm;
+      });
+    });
+  }, [panels]);
+
   const summary = useMemo(() => {
-    const onlineCount = panels.filter((panel) => panel.metrics.temp.value < 35).length;
+    const healthyCount = panels.filter((panel) => {
+      if (panel.status !== 'online') {
+        return false;
+      }
+      return !METRIC_DEFS.some((metric) => {
+        const value = panel.metrics[metric.key]?.value;
+        if (typeof value !== 'number' || Number.isNaN(value)) {
+          return false;
+        }
+        const threshold = configuredThresholds[metric.key] || DEFAULT_THRESHOLDS[metric.key];
+        return value < threshold.low || value > threshold.high;
+      });
+    }).length;
     return {
       total: panels.length,
-      online: onlineCount,
+      online: healthyCount,
       averageTemp: (panels.reduce((sum, panel) => sum + panel.metrics.temp.value, 0) / panels.length).toFixed(1),
     };
-  }, [panels]);
+  }, [panels, configuredThresholds]);
 
   // render the threshold editor page separately when the route matches
   if (isThresholdRoute) {
@@ -187,9 +322,12 @@ export default function PanelDashboard({ username, userRole = 'engineer', onLogo
           </div>
           <div style={styles.headerActions}>
             <div style={styles.userBadge}>Signed in as {username}</div>
-            <button type="button" onClick={onLogout} style={styles.secondaryButton}>
-              Log out
-            </button>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <button type="button" onClick={() => { enableAudio(); setAudioEnabled(true); }} style={{ ...styles.secondaryButton, background: audioEnabled ? '#0b3a2b' : undefined }}>
+                {audioEnabled ? 'Sound enabled' : 'Enable sound'}
+              </button>
+              <button type="button" onClick={onLogout} style={styles.secondaryButton}>Log out</button>
+            </div>
           </div>
         </header>
 
@@ -378,12 +516,47 @@ export default function PanelDashboard({ username, userRole = 'engineer', onLogo
                       </div>
                       <div style={styles.sparkline}>
                         <ResponsiveContainer width="100%" height="100%">
-                          <LineChart data={metric.history}>
+                          <LineChart
+                            data={metric.history.map((point) => ({
+                              ...point,
+                              alarmData: buildAlarmInfo(point.value, def.key, def.unit, configuredThresholds),
+                            }))}
+                          >
                             <CartesianGrid stroke="#203041" vertical={false} />
                             <XAxis dataKey="label" tick={false} axisLine={false} />
                             <YAxis hide domain={['dataMin - 1', 'dataMax + 1']} />
-                            <Tooltip />
-                            <Line type="monotone" dataKey="value" stroke={def.accent} strokeWidth={2} dot={false} />
+                            <Tooltip
+                              content={({ active, payload }) => {
+                                if (active && payload && payload.length) {
+                                  const item = payload[0].payload || {};
+                                  if (item.alarmData?.isAlarm) {
+                                    return (
+                                      <div style={{ background: '#07111d', color: '#E7ECF3', padding: 8, borderRadius: 6, fontSize: 11 }}>
+                                        <div style={{ fontWeight: 700 }}>{def.label}</div>
+                                        <div>{Number(item.value).toFixed(1)}{def.unit}</div>
+                                        <div style={{ marginTop: 4, color: '#F0605C' }}>⚠ {item.alarmData.message}</div>
+                                      </div>
+                                    );
+                                  }
+                                }
+                                return null;
+                              }}
+                            />
+                            <Line
+                              type="monotone"
+                              dataKey="value"
+                              stroke={def.accent}
+                              strokeWidth={2}
+                              dot={(dotProps) => {
+                                const payload = dotProps && dotProps.payload;
+                                if (payload && payload.alarmData?.isAlarm) {
+                                  return (
+                                    <circle cx={dotProps.cx} cy={dotProps.cy} r={4} fill="#F0605C" stroke="#fff" strokeWidth={0.8} />
+                                  );
+                                }
+                                return null;
+                              }}
+                            />
                           </LineChart>
                         </ResponsiveContainer>
                       </div>
@@ -428,12 +601,45 @@ export default function PanelDashboard({ username, userRole = 'engineer', onLogo
             </div>
             <div style={styles.chartWrap}>
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={selectedMetric.metric.history}>
+                <LineChart
+                  data={selectedMetric.metric.history.map((point) => ({
+                    ...point,
+                    alarmData: buildAlarmInfo(point.value, selectedMetric.def.key, selectedMetric.def.unit, configuredThresholds),
+                  }))}
+                >
                   <CartesianGrid stroke="#203041" vertical={false} />
                   <XAxis dataKey="label" tickLine={false} axisLine={false} />
                   <YAxis tickLine={false} axisLine={false} />
-                  <Tooltip />
-                  <Line type="monotone" dataKey="value" stroke={selectedMetric.def.accent} strokeWidth={3} dot={{ fill: selectedMetric.def.accent }} />
+                  <Tooltip
+                    content={({ active, payload }) => {
+                      if (active && payload && payload.length) {
+                        const item = payload[0].payload || {};
+                        if (item.alarmData?.isAlarm) {
+                          return (
+                            <div style={{ background: '#10161F', border: '1px solid #212B3B', padding: 10, borderRadius: 8, color: '#E7ECF3', fontSize: 12 }}>
+                              <div style={{ fontWeight: 700 }}>{selectedMetric.def.label}</div>
+                              <div>{Number(item.value).toFixed(1)}{selectedMetric.def.unit}</div>
+                              <div style={{ marginTop: 6, color: '#F0605C' }}>⚠ {item.alarmData.message}</div>
+                            </div>
+                          );
+                        }
+                      }
+                      return null;
+                    }}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="value"
+                    stroke={selectedMetric.def.accent}
+                    strokeWidth={3}
+                    dot={(dotProps) => {
+                      const payload = dotProps && dotProps.payload;
+                      if (payload && payload.alarmData?.isAlarm) {
+                        return <circle cx={dotProps.cx} cy={dotProps.cy} r={5} fill="#F0605C" stroke="#fff" strokeWidth={1} />;
+                      }
+                      return <circle cx={dotProps.cx} cy={dotProps.cy} r={4} fill={selectedMetric.def.accent} />;
+                    }}
+                  />
                 </LineChart>
               </ResponsiveContainer>
             </div>
@@ -726,8 +932,10 @@ const styles = {
     borderRadius: 20,
     width: '100%',
     maxWidth: 700,
+    maxHeight: 'min(90vh, 760px)',
     padding: 20,
     boxShadow: '0 16px 50px rgba(0, 0, 0, 0.35)',
+    overflow: 'hidden',
   },
   modalHeader: {
     display: 'flex',

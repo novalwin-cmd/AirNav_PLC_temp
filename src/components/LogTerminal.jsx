@@ -5,6 +5,54 @@ import { LineChart, Line, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianG
 
 const STORAGE_KEY = 'airnav_panel_logs_v1';
 const EXPORT_OPTIONS = ['csv', 'excel-csv', 'excel-xlsx', 'pdf', 'json'];
+const DEFAULT_THRESHOLDS = {
+  voltage: { low: 198, high: 242 },
+  current: { low: 0, high: 63 },
+  frequency: { low: 49.5, high: 50.5 },
+  cosphi: { low: 0.85, high: 1.0 },
+  power: { low: 0, high: 35 },
+  temp: { low: 15, high: 35 },
+};
+
+function getConfiguredThresholds() {
+  try {
+    const raw = window.localStorage.getItem('airnav_thresholds_v1');
+    const configured = raw ? JSON.parse(raw) : {};
+    return { ...DEFAULT_THRESHOLDS, ...configured };
+  } catch (e) {
+    return DEFAULT_THRESHOLDS;
+  }
+}
+
+function buildAlarmInfo(value, key, unit, thresholds) {
+  const threshold = thresholds[key] || DEFAULT_THRESHOLDS[key] || { low: 0, high: Infinity };
+  if (typeof value !== 'number' || Number.isNaN(value)) {
+    return null;
+  }
+  if (value > threshold.high) {
+    return {
+      param: key,
+      value,
+      unit,
+      low: threshold.low,
+      high: threshold.high,
+      level: 'crit',
+      detail: `Over ${key} (${value}${unit} > ${threshold.high}${unit})`,
+    };
+  }
+  if (value < threshold.low) {
+    return {
+      param: key,
+      value,
+      unit,
+      low: threshold.low,
+      high: threshold.high,
+      level: 'crit',
+      detail: `Under ${key} (${value}${unit} < ${threshold.low}${unit})`,
+    };
+  }
+  return null;
+}
 
 function timestampNow() {
   return new Date().toISOString();
@@ -28,7 +76,7 @@ function loadLogs() {
 }
 
 function buildCSV(rows) {
-  const header = ['timestamp', 'panelId', 'panelName', 'zone', 'metric', 'value', 'unit'];
+  const header = ['timestamp', 'panelId', 'panelName', 'zone', 'metric', 'value', 'unit', 'isAlarm', 'alarmParam', 'alarmLevel', 'alarmDetail'];
   const lines = [header.join(',')];
   rows.forEach((r) => {
     lines.push([
@@ -39,6 +87,10 @@ function buildCSV(rows) {
       r.metric,
       r.value,
       r.unit || '',
+      r.isAlarm,
+      r.alarmParam,
+      r.alarmLevel,
+      `"${String(r.alarmDetail || '').replace(/"/g, '""')}",`,
     ].map((c) => String(c).replace(/\r?\n/g, ' ')).join(','));
   });
   return lines.join('\n');
@@ -77,10 +129,8 @@ export default function LogTerminal({ panels = [], onBack }) {
 
   function handleExport() {
     if (!logs.length) return;
-    // Flatten rows per metric
     const rows = [];
     logs.forEach((r) => {
-      const metrics = r.metrics || r.metrics;
       Object.keys(r.metrics || {}).forEach((mkey) => {
         const m = r.metrics[mkey];
         rows.push({
@@ -91,6 +141,10 @@ export default function LogTerminal({ panels = [], onBack }) {
           metric: mkey,
           value: m.value,
           unit: m.unit || '',
+          isAlarm: r.isAlarm ? 'true' : 'false',
+          alarmParam: r.alarmInfo?.param || '',
+          alarmLevel: r.alarmInfo?.level || '',
+          alarmDetail: r.alarmInfo?.detail || '',
         });
       });
     });

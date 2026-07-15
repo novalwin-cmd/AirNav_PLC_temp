@@ -4,6 +4,47 @@ import { isMetricAlarm } from '../services/panelTelemetry';
 import PanelLogPage from './PanelLogPage';
 import ControlsPanel from './ControlsPanel';
 
+const DEFAULT_THRESHOLDS = {
+  voltage: { low: 198, high: 242 },
+  current: { low: 0, high: 63 },
+  frequency: { low: 49.5, high: 50.5 },
+  cosphi: { low: 0.85, high: 1.0 },
+  power: { low: 0, high: 35 },
+  temp: { low: 15, high: 35 },
+};
+
+function loadConfiguredThresholds() {
+  try {
+    const raw = window.localStorage.getItem('airnav_thresholds_v1');
+    const configured = raw ? JSON.parse(raw) : {};
+    return { ...DEFAULT_THRESHOLDS, ...configured };
+  } catch (e) {
+    return DEFAULT_THRESHOLDS;
+  }
+}
+
+function buildAlarmInfo(value, key, unit, thresholds) {
+  const threshold = thresholds[key] || DEFAULT_THRESHOLDS[key] || { low: 0, high: Infinity };
+  if (typeof value !== 'number' || Number.isNaN(value)) {
+    return { isAlarm: false, level: 'ok', message: null };
+  }
+  if (value > threshold.high) {
+    return {
+      isAlarm: true,
+      level: 'crit',
+      message: `Over ${key} (${value}${unit} > ${threshold.high}${unit})`,
+    };
+  }
+  if (value < threshold.low) {
+    return {
+      isAlarm: true,
+      level: 'crit',
+      message: `Under ${key} (${value}${unit} < ${threshold.low}${unit})`,
+    };
+  }
+  return { isAlarm: false, level: 'ok', message: null };
+}
+
 const METRIC_INFO = [
   { key: 'voltage', label: 'Voltage', unit: 'V' },
   { key: 'current', label: 'Current', unit: 'A' },
@@ -75,12 +116,43 @@ export default function PanelPage({ panel, mode, onBack }) {
             </div>
             <div style={{ minHeight: 360 }}>
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={series}>
+                <LineChart
+                  data={series.map((point) => ({
+                    ...point,
+                    alarmData: buildAlarmInfo(point.value, metric, metric === 'voltage' ? 'V' : metric === 'current' ? 'A' : metric === 'frequency' ? 'Hz' : metric === 'power' ? 'kW' : metric === 'temp' ? '°C' : '', loadConfiguredThresholds()),
+                  }))}
+                >
                   <CartesianGrid stroke="#203041" vertical={false} />
                   <XAxis dataKey="timestamp" tick={{ fill: '#8C97A8' }} tickLine={false} axisLine={false} />
                   <YAxis tick={{ fill: '#8C97A8' }} axisLine={false} tickLine={false} />
-                  <Tooltip contentStyle={{ background: '#10161F', border: '1px solid #212B3B', color: '#E7ECF3' }} />
-                  <Line type="monotone" dataKey="value" stroke="#2DD4BF" strokeWidth={3} dot={{ fill: '#2DD4BF' }} />
+                  <Tooltip content={({ active, payload }) => {
+                    if (active && payload && payload.length) {
+                      const item = payload[0].payload || {};
+                      if (item.alarmData?.isAlarm) {
+                        return (
+                          <div style={{ background: '#10161F', border: '1px solid #212B3B', padding: 10, borderRadius: 8, color: '#E7ECF3' }}>
+                            <div style={{ fontWeight: 700 }}>{metric}</div>
+                            <div>{Number(item.value).toFixed(1)}</div>
+                            <div style={{ marginTop: 6, color: '#F0605C' }}>⚠ {item.alarmData.message}</div>
+                          </div>
+                        );
+                      }
+                    }
+                    return null;
+                  }} />
+                  <Line
+                    type="monotone"
+                    dataKey="value"
+                    stroke="#2DD4BF"
+                    strokeWidth={3}
+                    dot={(dotProps) => {
+                      const payload = dotProps && dotProps.payload;
+                      if (payload && payload.alarmData?.isAlarm) {
+                        return <circle cx={dotProps.cx} cy={dotProps.cy} r={5} fill="#F0605C" stroke="#fff" strokeWidth={1} />;
+                      }
+                      return <circle cx={dotProps.cx} cy={dotProps.cy} r={4} fill="#2DD4BF" />;
+                    }}
+                  />
                 </LineChart>
               </ResponsiveContainer>
             </div>
