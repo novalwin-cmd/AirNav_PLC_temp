@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Navigate, Route, Routes, useNavigate } from 'react-router-dom';
 import LoginScreen from './components/LoginScreen';
 import PanelDashboard from './components/PanelDashboard';
+import PlcConnectionPanel from './components/PlcConnectionPanel';
 
 export default function App() {
   const [authenticatedUser, setAuthenticatedUser] = useState(null);
@@ -31,6 +32,7 @@ export default function App() {
       <Route path="/" element={<PanelDashboard username={authenticatedUser?.username} userRole={authenticatedUser?.role} onLogout={handleLogout} />} />
       <Route path="/panel/:panelId" element={<PanelDashboard username={authenticatedUser?.username} userRole={authenticatedUser?.role} onLogout={handleLogout} />} />
       <Route path="/thresholds" element={<PanelDashboard username={authenticatedUser?.username} userRole={authenticatedUser?.role} onLogout={handleLogout} />} />
+      <Route path="/plc" element={<PlcConnectionPanel />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
